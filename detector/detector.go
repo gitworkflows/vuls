@@ -4,10 +4,12 @@
 package detector
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slices"
 	"golang.org/x/xerrors"
 
 	"github.com/future-architect/vuls/config"
@@ -79,6 +81,58 @@ func Detect(rs []models.ScanResult, dir string) ([]models.ScanResult, error) {
 				UseJVN: true,
 			})
 		}
+
+		if slices.Contains([]string{constant.MacOSX, constant.MacOSXServer, constant.MacOS, constant.MacOSServer}, r.Family) {
+			if r.Release != "" {
+				switch r.Family {
+				case constant.MacOSX:
+					cpes = append(cpes, Cpe{
+						CpeURI: fmt.Sprintf("cpe:/o:apple:mac_os_x:%s", r.Release),
+						UseJVN: false,
+					})
+				case constant.MacOSXServer:
+					cpes = append(cpes, Cpe{
+						CpeURI: fmt.Sprintf("cpe:/o:apple:mac_os_x_server:%s", r.Release),
+						UseJVN: false,
+					})
+				case constant.MacOS:
+					cpes = append(cpes,
+						Cpe{
+							CpeURI: fmt.Sprintf("cpe:/o:apple:macos:%s", r.Release),
+							UseJVN: false,
+						},
+						Cpe{
+							CpeURI: fmt.Sprintf("cpe:/o:apple:mac_os:%s", r.Release),
+							UseJVN: false,
+						},
+					)
+				case constant.MacOSServer:
+					cpes = append(cpes,
+						Cpe{
+							CpeURI: fmt.Sprintf("cpe:/o:apple:macos_server:%s", r.Release),
+							UseJVN: false,
+						},
+						Cpe{
+							CpeURI: fmt.Sprintf("cpe:/o:apple:mac_os_server:%s", r.Release),
+							UseJVN: false,
+						},
+					)
+				}
+			}
+			for _, p := range r.Packages {
+				if p.Version == "" {
+					continue
+				}
+				switch p.Name {
+				case "Safari":
+					cpes = append(cpes, Cpe{
+						CpeURI: fmt.Sprintf("cpe:/a:apple:safari:%s", p.Version),
+						UseJVN: false,
+					})
+				}
+			}
+		}
+
 		if err := DetectCpeURIsCves(&r, cpes, config.Conf.CveDict, config.Conf.LogOpts); err != nil {
 			return nil, xerrors.Errorf("Failed to detect CVE of `%s`: %w", cpeURIs, err)
 		}
@@ -262,7 +316,7 @@ func DetectPkgCves(r *models.ScanResult, ovalCnf config.GovalDictConf, gostCnf c
 // isPkgCvesDetactable checks whether CVEs is detactable with gost and oval from the result
 func isPkgCvesDetactable(r *models.ScanResult) bool {
 	switch r.Family {
-	case constant.FreeBSD, constant.ServerTypePseudo:
+	case constant.FreeBSD, constant.MacOSX, constant.MacOSXServer, constant.MacOS, constant.MacOSServer, constant.ServerTypePseudo:
 		logging.Log.Infof("%s type. Skip OVAL and gost detection", r.Family)
 		return false
 	case constant.Windows:
@@ -430,7 +484,7 @@ func detectPkgsCvesWithOval(cnf config.GovalDictConf, r *models.ScanResult, logO
 		logging.Log.Infof("Skip OVAL and Scan with gost alone.")
 		logging.Log.Infof("%s: %d CVEs are detected with OVAL", r.FormatServerName(), 0)
 		return nil
-	case constant.Windows, constant.FreeBSD, constant.ServerTypePseudo:
+	case constant.Windows, constant.MacOSX, constant.MacOSXServer, constant.MacOS, constant.MacOSServer, constant.FreeBSD, constant.ServerTypePseudo:
 		return nil
 	default:
 		logging.Log.Debugf("Check if oval fetched: %s %s", r.Family, r.Release)
